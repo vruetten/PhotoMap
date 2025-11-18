@@ -4,7 +4,7 @@ Photomap processing scripts for image analysis.
 
 ![PhotoMap](photomap/pics/photomap.png)
 
-## Protocol
+## Motivation
 To quantify deformation introduced by expansion in a less biased manner, we developed PhotoMap, a method that measures the gel’s deformation field from a pre-imposed reference pattern. A regular grid is photobleached into the sample prior to expansion and re-imaged afterwards, enabling straightforward visualization and quantification of spatial distortions.
 
 ## Protocol
