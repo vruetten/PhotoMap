@@ -275,8 +275,7 @@ def plot_grid_with_deviation(image, grid_points_2d, gridiness_2d, deviation_type
     fig, ax = pl.subplots(figsize=figsize)
     
     # Display image
-    ax.imshow(image, cmap='gray')
-    ax.set_clim([40, 200])
+    im = ax.imshow(image, cmap='gray', vmin=40, vmax=200)
     
     # Extract coordinates (handle both 2D and 3D point arrays)
     if grid_points_2d.shape[-1] == 3:
@@ -419,7 +418,7 @@ def plot_grid_spacing_analysis(grid_points_2d, figsize=(5, 3)):
     fig, ax = pl.subplots(figsize=figsize)
     for ind, row in enumerate(range(num_rows)):
         color = pl.get_cmap('magma')(ind / num_rows)
-        ax.plot(subpoints[row, :, 1], subpoints[row, :, 2], 
+        ax.plot(subpoints[row, :, 1], subpoints[row, :, 0], 
                'o-', alpha=1, color=color)
     ax.set_title('Grid rows')
     ax.set_aspect('equal')
@@ -429,7 +428,7 @@ def plot_grid_spacing_analysis(grid_points_2d, figsize=(5, 3)):
     fig, ax = pl.subplots(figsize=figsize)
     for ind, col in enumerate(range(num_columns)):
         color = pl.get_cmap('magma')(ind / num_columns)
-        ax.plot(subpoints[:, col, 1], subpoints[:, col, 2], 
+        ax.plot(subpoints[:, col, 1], subpoints[:, col, 0], 
                'o-', alpha=1, color=color)
     ax.set_title('Grid columns')
     ax.set_aspect('equal')
