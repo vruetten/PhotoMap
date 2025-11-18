@@ -2,6 +2,8 @@
 
 Photomap processing scripts for image analysis.
 
+![PhotoMap](photomap/pics/photomap.png)
+
 ## Installation
 
 Install directly from GitHub:
