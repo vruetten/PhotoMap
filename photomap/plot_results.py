@@ -9,30 +9,25 @@ including:
 
 Example usage:
     import numpy as np
-    import tifffile as tf
     import matplotlib.pyplot as pl
     from photomap import plot_results
-    
-    # Load grid results
-    grid_results = np.load('path/to/grid_results.npy', allow_pickle=True).item()
-    grid_points = grid_results['grid_points']
     
     # Compute grid quality
     gridiness = plot_results.compute_gridiness(grid_points[:, :, 1:], L=90)
     
-    # Visualize
-    plot_results.plot_grid_on_image(image, grid_points, plane_idx=0)
+    # Plot deviation distributions
+    plot_results.plot_deviation_distributions(gridiness, grid_labels)
+    
+    # Visualize grid on image
+    plot_results.plot_grid_with_deviation(image, grid_points[6], gridiness[6], 
+                                          deviation_type='length')
 """
 
 import numpy as np
-from glob import glob
-import tifffile as tf
 import matplotlib.pyplot as pl
 import matplotlib as mpl
 from matplotlib import colors as mcolors
 import skimage
-import warnings
-from pathlib import Path
 from scipy.stats import gaussian_kde
 
 # ============================================================================
@@ -132,82 +127,17 @@ def compute_gridiness(grid_yx, L=90, weights=(1.0, 1.0, 0.5)):
 
 
 # ============================================================================
-# VISUALIZATION FUNCTIONS
+# DEVIATION DISTRIBUTION PLOTS
 # ============================================================================
 
-def plot_grid_on_image(image, grid_points, plane_idx=0, metric=None, 
-                        cmap='magma_r', vmin=0, vmax=0.5, figsize=(8, 16)):
-    """
-    Visualize grid points overlaid on an image with optional quality metrics.
-    
-    Parameters
-    ----------
-    image : ndarray, shape (Y, X)
-        2D image to display as background.
-    grid_points : ndarray, shape (num_planes, num_rows, num_columns, 3)
-        Grid of detected points.
-    plane_idx : int, optional
-        Which plane to visualize (default: 0).
-    metric : ndarray, shape (num_rows, num_columns), optional
-        Grid quality metric to color points (default: None).
-        If None, points are colored by row index.
-    cmap : str, optional
-        Colormap name for metric visualization (default: 'magma_r').
-    vmin, vmax : float, optional
-        Color scale limits for metric (default: 0, 0.5).
-    figsize : tuple, optional
-        Figure size in inches (default: (8, 16)).
-        
-    Returns
-    -------
-    fig : matplotlib.figure.Figure
-        The created figure object.
-    ax : matplotlib.axes.Axes
-        The axes object.
-    """
-    fig, ax = pl.subplots(figsize=figsize)
-    
-    # Display image
-    ax.imshow(image, cmap='gray')
-    ax.set_aspect('equal')
-    ax.axis('off')
-    
-    # Extract points for this plane
-    subpoints = grid_points[plane_idx, :, :, 1:]  # (rows, cols, 2) with (y, x)
-    num_rows, num_columns = subpoints.shape[:2]
-    
-    # Plot points
-    if metric is not None:
-        # Color by metric
-        points_flat = subpoints.reshape(-1, 2)
-        metric_flat = metric.reshape(-1)
-        vnorm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=(vmin + vmax) / 2, vmax=vmax)
-        sc = ax.scatter(points_flat[:, 1], points_flat[:, 0], 
-                       c=metric_flat, s=20, norm=vnorm, cmap=cmap)
-        pl.colorbar(sc, ax=ax, label='Grid Metric', shrink=0.2)
-    else:
-        # Color by row
-        for row in range(num_rows):
-            color = pl.get_cmap('prism')(row / num_rows)
-            ax.plot(subpoints[row, :, 1], subpoints[row, :, 0], 
-                   '.-', alpha=1, color=color)
-    
-    # Draw grid lines
-    for row in range(num_rows):
-        ax.plot(subpoints[row, :, 1], subpoints[row, :, 0], 
-               '-', alpha=0.3, color='k', zorder=-1, lw=1)
-    for col in range(num_columns):
-        ax.plot(subpoints[:, col, 1], subpoints[:, col, 0], 
-               '-', alpha=0.3, color='k', zorder=-1, lw=1)
-    
-    pl.tight_layout()
-    return fig, ax
-
-
 def plot_deviation_distributions(gridiness, grid_labels, on_sample_label=1,
-                                 save_path=None):
+                                 xlim=(-0.5, 0.5), ylim=(0, 27), 
+                                 figsize=(2, 1.5), save_path=None):
     """
     Plot distributions of grid deviation metrics comparing on-sample vs off-sample.
+    
+    This creates KDE (kernel density estimate) plots showing the distributions of
+    length and angle deviations for points on the sample versus off the sample.
     
     Parameters
     ----------
@@ -217,17 +147,22 @@ def plot_deviation_distributions(gridiness, grid_labels, on_sample_label=1,
         Labels indicating which points are on sample vs off.
     on_sample_label : int, optional
         Label value for on-sample points (default: 1).
+    xlim : tuple, optional
+        X-axis limits for plots (default: (-0.5, 0.5)).
+    ylim : tuple, optional
+        Y-axis limits for plots (default: (0, 27)).
+    figsize : tuple, optional
+        Figure size in inches (default: (2, 1.5)).
     save_path : str, optional
         If provided, save figures to this directory (default: None).
         
     Returns
     -------
-    None
-        Creates matplotlib figures showing KDE plots of deviations.
+    figs : list
+        List of matplotlib figure objects [length_fig, angle_fig].
     """
     length_dev = gridiness[..., 0]
     ortho_dev = gridiness[..., 1]
-    sym_dev = gridiness[..., 2]
     
     # Separate on-sample and off-sample
     length_on = length_dev[grid_labels == on_sample_label]
@@ -235,32 +170,42 @@ def plot_deviation_distributions(gridiness, grid_labels, on_sample_label=1,
     ortho_on = ortho_dev[grid_labels == on_sample_label]
     ortho_off = ortho_dev[grid_labels != on_sample_label]
     
+    figs = []
+    
     # Plot length deviation
-    fig, ax = pl.subplots(figsize=(2, 1.5))
+    fig, ax = pl.subplots(figsize=figsize)
     ax.set_title("Length Deviation")
     _plot_kde_comparison(length_on, length_off, ax, 
-                        labels=['on sample', 'off sample'])
+                        labels=['on sample', 'off sample'], xlim=xlim)
     ax.set_xlabel('Length deviation')
     ax.set_ylabel('Density')
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
     if save_path:
-        fig.savefig(f'{save_path}/length_deviation_kde.pdf')
+        fig.savefig(f'{save_path}/length_deviation_kde.pdf', bbox_inches='tight')
+    figs.append(fig)
     
     # Plot angle deviation
-    fig, ax = pl.subplots(figsize=(2, 1.5))
+    fig, ax = pl.subplots(figsize=figsize)
     ax.set_title("Angle Deviation")
     _plot_kde_comparison(ortho_on, ortho_off, ax,
-                        labels=['on sample', 'off sample'])
+                        labels=['on sample', 'off sample'], xlim=xlim)
     ax.set_xlabel('Angle deviation')
     ax.set_ylabel('Density')
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
     if save_path:
-        fig.savefig(f'{save_path}/angle_deviation_kde.pdf')
+        fig.savefig(f'{save_path}/angle_deviation_kde.pdf', bbox_inches='tight')
+    figs.append(fig)
     
-    pl.show()
+    return figs
 
 
 def _plot_kde_comparison(data0, data1, ax, labels=None, xlim=(-0.5, 0.5)):
     """Helper function to plot KDE comparison between two datasets."""
     # Remove NaN values
+    data0 = data0.flatten()
+    data1 = data1.flatten()
     data0 = data0[~np.isnan(data0)]
     data1 = data1[~np.isnan(data1)]
     
@@ -280,15 +225,214 @@ def _plot_kde_comparison(data0, data1, ax, labels=None, xlim=(-0.5, 0.5)):
     if labels is None:
         labels = ['Group 0', 'Group 1']
     
+    # Plot off-sample first (background)
     ax.plot(x_eval, pdf1, color=pl.get_cmap('tab10')(0), lw=2, alpha=1, 
            label=labels[1], zorder=-1)
     ax.fill_between(x_eval, pdf1, 0, color=pl.get_cmap('tab10')(0), 
                    alpha=0.8, zorder=-1)
     
+    # Plot on-sample on top
     ax.plot(x_eval, pdf0, color=pl.get_cmap('tab10')(1), lw=2, alpha=0.7,
            label=labels[0])
     ax.fill_between(x_eval, pdf0, 0, color=pl.get_cmap('tab10')(1), 
                    alpha=0.7)
+
+
+# ============================================================================
+# GRID VISUALIZATION ON IMAGES
+# ============================================================================
+
+def plot_grid_with_deviation(image, grid_points_2d, gridiness_2d, deviation_type='length',
+                             vmin=0, vmax=0.5, figsize=(8, 16), save_path=None):
+    """
+    Visualize grid points overlaid on an image with deviation metrics as colors.
     
-    ax.set_xlim(xlim)
-    ax.legend(loc='upper right', fontsize='small')
+    Parameters
+    ----------
+    image : ndarray, shape (Y, X)
+        2D image to display as background.
+    grid_points_2d : ndarray, shape (num_rows, num_columns, 2 or 3)
+        Grid of detected points for a single plane.
+        If shape is (..., 3), uses last 2 dimensions as (y, x).
+    gridiness_2d : ndarray, shape (num_rows, num_columns, 3)
+        Grid quality metrics for the same plane.
+    deviation_type : str, optional
+        Type of deviation to visualize: 'length' or 'angle' (default: 'length').
+    vmin, vmax : float, optional
+        Color scale limits for deviation metric (default: 0, 0.5).
+    figsize : tuple, optional
+        Figure size in inches (default: (8, 16)).
+    save_path : str, optional
+        If provided, save figure to this path (default: None).
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The created figure object.
+    ax : matplotlib.axes.Axes
+        The axes object.
+    """
+    fig, ax = pl.subplots(figsize=figsize)
+    
+    # Display image
+    ax.imshow(image, cmap='gray')
+    ax.set_clim([40, 200])
+    
+    # Extract coordinates (handle both 2D and 3D point arrays)
+    if grid_points_2d.shape[-1] == 3:
+        subpoints = grid_points_2d[:, :, 1:]  # Take last 2 dimensions (y, x)
+    else:
+        subpoints = grid_points_2d
+    
+    # Select deviation metric
+    deviation_idx = 0 if deviation_type == 'length' else 1
+    sublabels = np.abs(gridiness_2d[:, :, deviation_idx])
+    
+    # Flatten for scatter plot
+    points_flat = subpoints.reshape(-1, 2)
+    labels_flat = sublabels.reshape(-1)
+    
+    # Create colormap normalization
+    vcenter = (vmin + vmax) / 2
+    vnorm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
+    cmap = pl.get_cmap('magma_r')
+    
+    # Plot points with colors
+    sc = ax.scatter(points_flat[:, 1], points_flat[:, 0], 
+                   c=labels_flat, s=20, norm=vnorm, cmap=cmap)
+    pl.colorbar(sc, ax=ax, label=f'{deviation_type} deviation', shrink=0.2)
+    
+    # Draw grid lines
+    num_rows, num_columns = subpoints.shape[:2]
+    for row in range(num_rows):
+        ax.plot(subpoints[row, :, 1], subpoints[row, :, 0], 
+               '-', alpha=1, color='k', zorder=-1, lw=1)
+    for col in range(num_columns):
+        ax.plot(subpoints[:, col, 1], subpoints[:, col, 0], 
+               '-', alpha=1, color='k', zorder=-1, lw=1)
+    
+    ax.axis('equal')
+    ax.axis('off')
+    
+    if save_path:
+        fig.savefig(save_path, bbox_inches='tight')
+    
+    return fig, ax
+
+
+def plot_grid_by_rows_and_columns(image, grid_points_2d, figsize=(8, 16), 
+                                  gamma=1.2, save_path=None):
+    """
+    Visualize grid with rows and columns colored differently.
+    
+    Parameters
+    ----------
+    image : ndarray, shape (Y, X)
+        2D image to display as background.
+    grid_points_2d : ndarray, shape (num_rows, num_columns, 2 or 3)
+        Grid of detected points for a single plane.
+        If shape is (..., 3), uses last 2 dimensions as (y, x).
+    figsize : tuple, optional
+        Figure size in inches (default: (8, 16)).
+    gamma : float, optional
+        Gamma correction for image display (default: 1.2).
+    save_path : str, optional
+        If provided, save figure to this path (default: None).
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The created figure object.
+    ax : matplotlib.axes.Axes
+        The axes object.
+    """
+    fig, ax = pl.subplots(figsize=figsize)
+    
+    # Apply gamma correction to image
+    image_adj = image - image.min()
+    image_gamma = skimage.exposure.adjust_gamma(image_adj, gamma)
+    
+    ax.imshow(image_gamma, cmap='gray')
+    
+    # Extract coordinates
+    if grid_points_2d.shape[-1] == 3:
+        subpoints = grid_points_2d[:, :, :]
+    else:
+        subpoints = grid_points_2d
+    
+    num_rows, num_columns = subpoints.shape[:2]
+    
+    # Plot rows with different colors
+    for ind, row in enumerate(range(num_rows)):
+        color = pl.get_cmap('prism')(ind / num_rows)
+        if subpoints.shape[-1] == 3:
+            ax.plot(subpoints[row, :, 2], subpoints[row, :, 1], 
+                   '.-', alpha=1, color=color)
+        else:
+            ax.plot(subpoints[row, :, 1], subpoints[row, :, 0], 
+                   '.-', alpha=1, color=color)
+    
+    # Plot columns with different colors
+    for ind, col in enumerate(range(num_columns)):
+        color = pl.get_cmap('prism')(ind / num_columns)
+        if subpoints.shape[-1] == 3:
+            ax.plot(subpoints[:, col, 2], subpoints[:, col, 1], 
+                   '.-', alpha=1, color=color)
+        else:
+            ax.plot(subpoints[:, col, 1], subpoints[:, col, 0], 
+                   '.-', alpha=1, color=color)
+    
+    ax.axis('equal')
+    ax.axis('off')
+    
+    if save_path:
+        fig.savefig(save_path, bbox_inches='tight')
+    
+    return fig, ax
+
+
+def plot_grid_spacing_analysis(grid_points_2d, figsize=(5, 3)):
+    """
+    Plot grid point spacing along rows and columns.
+    
+    Parameters
+    ----------
+    grid_points_2d : ndarray, shape (num_rows, num_columns, 2 or 3)
+        Grid of detected points for a single plane.
+    figsize : tuple, optional
+        Figure size in inches (default: (5, 3)).
+        
+    Returns
+    -------
+    figs : list
+        List of matplotlib figure objects [row_spacing_fig, col_spacing_fig].
+    """
+    if grid_points_2d.shape[-1] == 3:
+        subpoints = grid_points_2d[:, :, 1:]  # Use last 2 dims (y, x)
+    else:
+        subpoints = grid_points_2d
+    
+    num_rows, num_columns = subpoints.shape[:2]
+    figs = []
+    
+    # Plot rows with spacing colored
+    fig, ax = pl.subplots(figsize=figsize)
+    for ind, row in enumerate(range(num_rows)):
+        color = pl.get_cmap('magma')(ind / num_rows)
+        ax.plot(subpoints[row, :, 1], subpoints[row, :, 2], 
+               'o-', alpha=1, color=color)
+    ax.set_title('Grid rows')
+    ax.set_aspect('equal')
+    figs.append(fig)
+    
+    # Plot columns with spacing colored
+    fig, ax = pl.subplots(figsize=figsize)
+    for ind, col in enumerate(range(num_columns)):
+        color = pl.get_cmap('magma')(ind / num_columns)
+        ax.plot(subpoints[:, col, 1], subpoints[:, col, 2], 
+               'o-', alpha=1, color=color)
+    ax.set_title('Grid columns')
+    ax.set_aspect('equal')
+    figs.append(fig)
+    
+    return figs
