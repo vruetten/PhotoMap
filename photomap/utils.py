@@ -1,3 +1,14 @@
+"""
+Photomap Utilities Module
+
+This module provides core image processing and analysis utilities for photomap data,
+including:
+- FFT-based cross-correlation for template matching
+- Blob detection using Laplacian of Gaussian
+- Grid construction and analysis from detected points
+- Connected component analysis for spatial clustering
+"""
+
 from numpy.fft import fft2, ifft2
 import matplotlib.pyplot as pl
 from scipy.ndimage import gaussian_laplace
@@ -5,6 +16,10 @@ from skimage.feature import peak_local_max
 import numpy as np
 from scipy.spatial import KDTree
 from scipy.spatial.distance import cdist
+
+# ============================================================================
+# FFT-BASED CORRELATION METHODS
+# ============================================================================
 
 # ------------------------------------------------------------
 # 1. FFT-based linear cross-correlation (un-normalised)
@@ -86,10 +101,29 @@ def zncc(I, T):
     return np.where(denom > 0, num / denom, 0.0)
 
 def downsample_data(test_data, factor=2):
+    """
+    Downsample 2D data by averaging over blocks.
+    
+    Parameters
+    ----------
+    test_data : ndarray
+        Input 2D array to downsample.
+    factor : int, optional
+        Downsampling factor (default: 2).
+        
+    Returns
+    -------
+    ndarray
+        Downsampled array with shape reduced by factor in both dimensions.
+    """
     test_data_ = test_data[:(test_data.shape[0]//factor)*factor, :(test_data.shape[1]//factor)*factor].reshape(test_data.shape[0]//factor, factor, test_data.shape[1]//factor, factor,)
     test_data_ = np.mean(test_data_, axis=(1,3))
     return test_data_
 
+
+# ============================================================================
+# PEAK ENHANCEMENT AND DETECTION
+# ============================================================================
 
 from scipy.ndimage import uniform_filter
 
@@ -184,14 +218,41 @@ def find_blob_centers(image,
     return coords, LoG
 
 
+# ============================================================================
+# GRID CLUSTERING AND CONNECTED COMPONENTS
+# ============================================================================
+
 def horizontal_link_clustering(P, k=6, max_dist=1.0, min_dist=0.1, curvature_deg=20, margin = np.pi/10, single_angle_max = 15, weighted_dist_max = 1000):
     """
-    P: array (N,2) of 2‑D points
-    k: k‑NN to consider when choosing neighbour
-    max_dist: reject neighbour links longer than this
-    min_dist: reject neighbour links shorter than this
-    curvature_deg: break clusters when turning angle exceeds this threshold
-    returns neighbor_idxs array (N, 4) with indices for right, upper, left, lower neighbors
+    Cluster points by linking to nearest neighbors in horizontal/vertical directions.
+    
+    This function builds a grid-like structure by connecting each point to its
+    nearest neighbor in four quadrant directions (right, up, left, down).
+    
+    Parameters
+    ----------
+    P : ndarray, shape (N, 2) or (N, 3)
+        Array of 2D or 3D points to cluster.
+    k : int, optional
+        Number of k-nearest neighbors to consider (default: 6).
+    max_dist : float, optional
+        Maximum distance for valid neighbor links (default: 1.0).
+    min_dist : float, optional
+        Minimum distance for valid neighbor links (default: 0.1).
+    curvature_deg : float, optional
+        Maximum turning angle in degrees (currently unused, default: 20).
+    margin : float, optional
+        Angular margin for quadrant assignment in radians (default: π/10).
+    single_angle_max : float, optional
+        Maximum angle deviation in degrees for single neighbors (default: 15).
+    weighted_dist_max : float, optional
+        Maximum weighted distance threshold (default: 1000).
+        
+    Returns
+    -------
+    neighbor_idxs : ndarray, shape (N, 4)
+        Indices of neighbors for each point: [right, up, left, down].
+        -1 indicates no valid neighbor in that direction.
     """
     from collections import defaultdict
     
@@ -408,8 +469,32 @@ def connected_components_from_neighbours(
 
     return labels_H, comps_H, labels_V, comps_V, horiz_pts, vert_pts
 
-def save_crops(slx, sly, slab_size, file_name, slab, crop):
-    crop_file_name = f'{outpath}/{file_name}_crops_new.npy'
+def save_crops(slx, sly, slab_size, file_name, slab, crop, output_path='.'):
+    """
+    Save image crop data to a numpy file.
+    
+    Parameters
+    ----------
+    slx, sly : int
+        Crop location indices.
+    slab_size : int
+        Size of the slab.
+    file_name : str
+        Base name for output file.
+    slab : ndarray
+        Slab data (currently unused).
+    crop : ndarray
+        The cropped image data to save.
+    output_path : str, optional
+        Directory path for output file (default: '.').
+        
+    Returns
+    -------
+    dict
+        Dictionary containing all saved crops including the new one.
+    """
+    import os
+    crop_file_name = f'{output_path}/{file_name}_crops_new.npy'
     if os.path.exists(crop_file_name):
         crops = np.load(crop_file_name, allow_pickle=True).item()
     else:
@@ -587,10 +672,39 @@ def build_grid(
         pick: str = "median"
 ) -> np.ndarray:
     """
+    Construct a regular grid from detected horizontal and vertical line segments.
+    
+    This function matches intersection points between horizontal and vertical lines
+    to create a structured grid representation. It handles missing intersections
+    and selects optimal representatives when multiple candidates exist.
+    
+    Parameters
+    ----------
+    vertical : list of ndarray
+        List of vertical line segments, each shape (N_i, D) where D is 2 or 3.
+    horizontal : list of ndarray
+        List of horizontal line segments, each shape (N_j, D).
+    tol_upper_bound : float, optional
+        Maximum distance for matching intersection points (default: 1.0).
+    tol_lower_bound : float, optional
+        Minimum distance threshold (currently unused, default: 1.0).
+    min_intra_h : float, optional
+        Minimum separation between points within horizontal lines (default: 0.0).
+    min_intra_v : float, optional
+        Minimum separation between points within vertical lines (default: 0.0).
+    pick : str, optional
+        Method for selecting representative from clustered points:
+        'median', 'mean', or 'first' (default: 'median').
+    
     Returns
     -------
-    grid : shape (n_rows, n_cols, D)   (D = 2 or 3)
-           grid[i, j] is the common node, NaN where absent.
+    grid : ndarray, shape (n_rows, n_cols, D)
+        Regular grid where grid[i, j] contains intersection coordinates.
+        NaN values indicate missing intersections.
+    vertical : list of ndarray
+        Processed vertical lines after thinning.
+    horizontal : list of ndarray
+        Processed horizontal lines after thinning.
     """
 
 
@@ -777,7 +891,24 @@ def rung_spacings(grid: np.ndarray):
 
 def merge_lines(horizontal_lines, tol = 100, max_horizontal_lines = 5):
     """
-    Merge horizontal and vertical lines that are close to each other.
+    Merge horizontal lines that are spatially close to each other.
+    
+    This function combines line segments that are nearby in the coordinate space,
+    reducing redundant detections and improving grid structure.
+    
+    Parameters
+    ----------
+    horizontal_lines : list of ndarray
+        List of horizontal line segments to potentially merge.
+    tol : float, optional
+        Distance tolerance for merging lines (default: 100).
+    max_horizontal_lines : int, optional
+        Only attempt merging if more than this many lines exist (default: 5).
+        
+    Returns
+    -------
+    list of ndarray
+        Merged list of horizontal lines with redundant segments combined.
     """
     # if the start and end of the horizontal line are close to the start and end of another horizontal line (in terms of y axis), then merge the two lines
     if len(horizontal_lines) > max_horizontal_lines:
@@ -809,11 +940,35 @@ def merge_lines(horizontal_lines, tol = 100, max_horizontal_lines = 5):
 
 
 
+# ============================================================================
+# MASK PROCESSING UTILITIES
+# ============================================================================
+
 from scipy.spatial import cKDTree
 from skimage.draw import line_nd         # tiny helper in scikit‑image
 from scipy import ndimage as ndi
 
 def fill_mask(mask, extensionz = 1, extensionxy = 50):
+    """
+    Fill and extend a 3D binary mask around detected points.
+    
+    This function expands regions around points in a 3D mask and fills internal
+    cavities to create a continuous volume.
+    
+    Parameters
+    ----------
+    mask : ndarray, shape (Z, Y, X)
+        3D binary mask to process.
+    extensionz : int, optional
+        Extension distance in Z direction (default: 1).
+    extensionxy : int, optional
+        Extension distance in X and Y directions (default: 50).
+        
+    Returns
+    -------
+    ndarray
+        Filled and extended binary mask with same shape as input.
+    """
 
     pts = np.vstack(np.nonzero(mask)).T       # N×3 [z,y,x] coords
     dz, dy, dx = mask.shape
