@@ -43,3 +43,7 @@ from photomap import utils, find_grid, plot_results
 - matplotlib
 - scikit-image
 - tifffile
+
+## License
+
+This project is released under the [Janelia Open-Source Software License](https://www.janelia.org/node/47808) (3-clause BSD, copyright Howard Hughes Medical Institute). See [LICENSE](LICENSE) for the full text.
